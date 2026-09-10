@@ -1,0 +1,13 @@
+# Machine-local / generated. Edit ~/.config/oconfig/ignore.txt after init.
+# A trailing slash ignores the whole directory.
+
+.config/hypr/monitors.lua
+.config/hypr/input.lua
+.config/hypr/looknfeel.lua
+.config/omarchy/chromium-flags.extra.conf
+.config/omarchy/shell.toml
+.config/omarchy/branding/
+.config/omarchy/plugins/
+.config/omarchy/themes/
+.config/omarchy/hooks/
+.config/git/config

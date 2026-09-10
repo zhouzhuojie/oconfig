@@ -1,0 +1,454 @@
+#!/usr/bin/env bash
+# oconfig — save Omarchy customizations into a local git repo.
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/oconfig"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/oconfig"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+IGNORE_FILE="$CONFIG_DIR/ignore.txt"
+DEFAULT_IGNORE="$PLUGIN_ROOT/share/ignore.txt"
+DEFAULT_REPO="${XDG_DATA_HOME:-$HOME/.local/share}/oconfig/store"
+OMARCHY_CONFIG="${OMARCHY_PATH:-/usr/share/omarchy}/config"
+SCAN_ROOTS=(hypr omarchy kitty alacritty foot ghostty)
+EXTRA_HOME_FILES=(.XCompose .gitconfig)
+JSON=0
+
+die() { echo "oconfig: $*" >&2; exit 1; }
+
+usage() {
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  cat <<'EOF'
+
+Usage:
+  oconfig init [--repo PATH]   create the store (git repo) and config
+  oconfig check                customizations not yet in the store
+  oconfig save [-m MSG]        copy customizations into the store and commit
+  oconfig adopt <path>         copy one live file into the store
+  oconfig restore [--dry-run]  copy the store back onto this machine
+  oconfig status               store + drift summary
+  oconfig diff                 live vs store for tracked files
+  oconfig ignore add <path>    mark a path as machine-local
+
+  --json   machine-readable output on check/status/save/restore
+EOF
+}
+
+dump_json() {
+  python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])))' "$1"
+}
+
+repo_path() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    python3 -c 'import json,os,sys; p=json.load(open(sys.argv[1])).get("repo","")
+print(os.path.expanduser(p))' "$CONFIG_FILE" 2>/dev/null || true
+  fi
+}
+
+ensure_ignore() {
+  mkdir -p "$CONFIG_DIR"
+  if [[ ! -f "$IGNORE_FILE" ]]; then
+    cp "$DEFAULT_IGNORE" "$IGNORE_FILE"
+  fi
+}
+
+ignored() {
+  local rel="$1"
+  [[ "$rel" == *.sample || "$rel" == *.bak || "$rel" == *.bak.* ]] && return 0
+  [[ -f "$IGNORE_FILE" ]] || return 1
+  local pat
+  while IFS= read -r pat; do
+    pat="${pat%%#*}"
+    pat="${pat%"${pat##*[![:space:]]}"}"
+    [[ -z "$pat" ]] && continue
+    if [[ "$pat" == */ ]]; then
+      [[ "$rel" == "$pat"* || "$rel" == "${pat%/}" ]] && return 0
+    else
+      [[ "$rel" == "$pat" ]] && return 0
+    fi
+  done < "$IGNORE_FILE"
+  return 1
+}
+
+require_repo() {
+  local r
+  r="$(repo_path)"
+  [[ -n "$r" && -d "$r/.git" ]] || die "store not initialized (run: oconfig init)"
+  printf '%s\n' "$r"
+}
+
+in_store() {
+  local repo="$1" rel="$2"
+  git -C "$repo" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1
+}
+
+tracked_paths() {
+  local repo="$1"
+  git -C "$repo" ls-files -- '.config' '.gitconfig' '.XCompose'
+}
+
+git_identity_args() {
+  local repo="$1"
+  if git -C "$repo" config user.name >/dev/null && git -C "$repo" config user.email >/dev/null; then
+    return 0
+  fi
+  echo -c user.name=oconfig -c user.email=oconfig@localhost
+}
+
+commit_if_dirty() {
+  local repo="$1" msg="$2"
+  git -C "$repo" add -A -- '.config' '.gitconfig' '.XCompose' >/dev/null
+  if git -C "$repo" diff --cached --quiet; then
+    return 1
+  fi
+  # shellcheck disable=SC2046
+  git -C "$repo" $(git_identity_args "$repo") commit -m "$msg" >/dev/null
+  return 0
+}
+
+normalize_rel() {
+  local p="$1"
+  p="${p/#\~/$HOME}"
+  if [[ "$p" == "$HOME"/* ]]; then
+    p="${p#"$HOME"/}"
+  fi
+  p="${p#./}"
+  printf '%s\n' "$p"
+}
+
+# Print home-relative paths of live files that differ from Omarchy defaults
+# (or are extras) and are not ignored.
+scan_customizations() {
+  local repo="${1:-}"
+  local root live_root f rel pkg
+  ensure_ignore
+  [[ -d "$OMARCHY_CONFIG" ]] || die "Omarchy config not found at $OMARCHY_CONFIG"
+
+  for root in "${SCAN_ROOTS[@]}"; do
+    live_root="$HOME/.config/$root"
+    [[ -d "$live_root" ]] || continue
+    while IFS= read -r -d '' f; do
+      rel=".config/${f#"$HOME/.config/"}"
+      ignored "$rel" && continue
+      pkg="$OMARCHY_CONFIG/${rel#.config/}"
+      if [[ -f "$pkg" ]] && cmp -s "$f" "$pkg"; then
+        continue
+      fi
+      printf '%s\n' "$rel"
+    done < <(find "$live_root" -xtype f -print0 2>/dev/null)
+  done
+
+  local extra
+  for extra in "${EXTRA_HOME_FILES[@]}"; do
+    ignored "$extra" && continue
+    [[ -e "$HOME/$extra" || -L "$HOME/$extra" ]] || continue
+    printf '%s\n' "$extra"
+  done
+}
+
+copy_into_store() {
+  local repo="$1" rel="$2"
+  local live="$HOME/$rel"
+  local dest="$repo/$rel"
+  [[ -e "$live" || -L "$live" ]] || die "nothing at $live"
+  mkdir -p "$(dirname "$dest")"
+  cp -aL "$live" "$dest"
+}
+
+cmd_init() {
+  local repo="$DEFAULT_REPO"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) repo="${2:-}"; shift 2 ;;
+      *) die "unknown init option: $1" ;;
+    esac
+  done
+  repo="${repo/#\~/$HOME}"
+  mkdir -p "$repo" "$CONFIG_DIR" "$STATE_DIR"
+  if [[ ! -d "$repo/.git" ]]; then
+    git init -q -b main "$repo"
+    git -C "$repo" config user.name "$(git config --global user.name 2>/dev/null || echo oconfig)"
+    git -C "$repo" config user.email "$(git config --global user.email 2>/dev/null || echo oconfig@localhost)"
+  fi
+  python3 - "$CONFIG_FILE" "$repo" <<'PY'
+import json, os, sys
+path, repo = sys.argv[1], sys.argv[2]
+cfg = {}
+if os.path.exists(path):
+    try:
+        cfg = json.load(open(path))
+    except Exception:
+        cfg = {}
+cfg["repo"] = repo
+os.makedirs(os.path.dirname(path), exist_ok=True)
+json.dump(cfg, open(path, "w"), indent=2)
+print("", end="")
+PY
+  ensure_ignore
+  if [[ ! -f "$repo/README.md" ]]; then
+    cat > "$repo/README.md" <<EOF
+# oconfig store
+
+Omarchy customizations saved by [oconfig](https://github.com/zhouzhuojie/oconfig).
+Edit live files under \`~/.config\`, then \`oconfig save\`.
+EOF
+    git -C "$repo" add README.md
+    git -C "$repo" $(git_identity_args "$repo") commit -q -m "oconfig: initialize store" || true
+  fi
+  echo "initialized store at $repo"
+}
+
+cmd_check() {
+  local repo=""
+  if [[ -f "$CONFIG_FILE" ]]; then
+    repo="$(repo_path || true)"
+  fi
+  local rel paths=()
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    if [[ -n "$repo" && -d "$repo/.git" ]] && in_store "$repo" "$rel"; then
+      continue
+    fi
+    paths+=("$rel")
+  done < <(scan_customizations | sort -u)
+
+  if (( JSON )); then
+    python3 -c 'import json,sys; print(json.dumps({"untracked": sys.argv[1:], "count": len(sys.argv)-1}))' \
+      "${paths[@]+"${paths[@]}"}"
+    return
+  fi
+
+  if (( ${#paths[@]} == 0 )); then
+    echo "ok   no untracked Omarchy customizations"
+    return
+  fi
+  local p
+  for p in "${paths[@]}"; do
+    echo "$p"
+  done
+}
+
+cmd_adopt() {
+  local rel="${1:-}"
+  [[ -n "$rel" ]] || die "usage: oconfig adopt .config/hypr/foo.lua"
+  rel="$(normalize_rel "$rel")"
+  ignored "$rel" && die "$rel is in ignore.txt (machine-local)"
+  local repo
+  repo="$(require_repo)"
+  copy_into_store "$repo" "$rel"
+  echo "saved $rel"
+}
+
+cmd_save() {
+  local msg="oconfig: save customizations"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -m|--message) msg="${2:-}"; shift 2 ;;
+      *) die "unknown save option: $1" ;;
+    esac
+  done
+  local repo
+  repo="$(require_repo)"
+  local rel saved=()
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    ignored "$rel" && continue
+    copy_into_store "$repo" "$rel"
+    saved+=("$rel")
+  done < <(scan_customizations | sort -u)
+
+  # Also refresh already-tracked files that still exist live.
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    [[ -e "$HOME/$rel" || -L "$HOME/$rel" ]] || continue
+    copy_into_store "$repo" "$rel"
+  done < <(tracked_paths "$repo")
+
+  local committed=0
+  if commit_if_dirty "$repo" "$msg"; then
+    committed=1
+  fi
+
+  if (( JSON )); then
+    python3 -c 'import json,sys; print(json.dumps({"saved": sys.argv[3:], "committed": sys.argv[1]=="1", "repo": sys.argv[2]}))' \
+      "$committed" "$repo" "${saved[@]+"${saved[@]}"}"
+    return
+  fi
+
+  if (( ${#saved[@]} )); then
+    local p
+    for p in "${saved[@]}"; do echo "save $p"; done
+  fi
+  if (( committed )); then
+    echo "committed in $repo"
+  else
+    echo "ok   store already up to date"
+  fi
+}
+
+cmd_restore() {
+  local dry=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry=1; shift ;;
+      *) die "unknown restore option: $1" ;;
+    esac
+  done
+  local repo
+  repo="$(require_repo)"
+  local rel dest bak restored=()
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    dest="$HOME/$rel"
+    if (( dry )); then
+      echo "would restore $rel"
+      restored+=("$rel")
+      continue
+    fi
+    mkdir -p "$(dirname "$dest")"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      if ! cmp -s "$repo/$rel" "$dest"; then
+        bak="$dest.bak.oconfig.$(date +%s)"
+        cp -aL "$dest" "$bak"
+      fi
+    fi
+    # Copy onto a real file. If dest is a symlink, replace it so omarchy
+    # refresh cannot write through into the store.
+    if [[ -L "$dest" ]]; then
+      rm -f "$dest"
+    fi
+    cp -a "$repo/$rel" "$dest"
+    restored+=("$rel")
+  done < <(tracked_paths "$repo")
+
+  if (( JSON )); then
+    python3 -c 'import json,sys; print(json.dumps({"restored": sys.argv[2:], "dryRun": sys.argv[1]=="1"}))' \
+      "$dry" "${restored[@]+"${restored[@]}"}"
+    return
+  fi
+
+  if (( ${#restored[@]} == 0 )); then
+    echo "ok   store is empty — nothing to restore"
+    return
+  fi
+  local p
+  for p in "${restored[@]}"; do
+    if (( dry )); then echo "would restore $p"; else echo "restored $p"; fi
+  done
+}
+
+cmd_status() {
+  local initialized=0 repo="" dirty=0 untracked=0 ahead=0 behind=0 last=""
+  local untracked_paths=()
+  if [[ -f "$CONFIG_FILE" ]]; then
+    repo="$(repo_path || true)"
+  fi
+  if [[ -n "$repo" && -d "$repo/.git" ]]; then
+    initialized=1
+    if ! git -C "$repo" diff --quiet || ! git -C "$repo" diff --cached --quiet; then
+      dirty=1
+    fi
+    last="$(git -C "$repo" log -1 --format='%h %s' 2>/dev/null || true)"
+    local ab
+    ab="$(git -C "$repo" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null || echo '0	0')"
+    behind="${ab%%	*}"
+    ahead="${ab##*	}"
+  fi
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    if [[ "$initialized" -eq 1 ]] && in_store "$repo" "$rel"; then
+      continue
+    fi
+    untracked_paths+=("$rel")
+  done < <(scan_customizations 2>/dev/null | sort -u || true)
+  untracked=${#untracked_paths[@]}
+
+  if (( JSON )); then
+    OCONFIG_INITIALIZED="$initialized" OCONFIG_REPO="$repo" OCONFIG_DIRTY="$dirty" \
+    OCONFIG_UNTRACKED="$untracked" OCONFIG_AHEAD="${ahead:-0}" OCONFIG_BEHIND="${behind:-0}" \
+    OCONFIG_LAST="$last" python3 -c 'import json,os,sys
+print(json.dumps({
+  "initialized": os.environ.get("OCONFIG_INITIALIZED")=="1",
+  "repo": os.environ.get("OCONFIG_REPO",""),
+  "dirty": os.environ.get("OCONFIG_DIRTY")=="1",
+  "untracked": int(os.environ.get("OCONFIG_UNTRACKED") or 0),
+  "ahead": int(os.environ.get("OCONFIG_AHEAD") or 0),
+  "behind": int(os.environ.get("OCONFIG_BEHIND") or 0),
+  "lastCommit": os.environ.get("OCONFIG_LAST",""),
+  "untrackedPaths": sys.argv[1:],
+}))' "${untracked_paths[@]+"${untracked_paths[@]}"}"
+    return
+  fi
+
+  if (( initialized == 0 )); then
+    echo "not initialized — run: oconfig init"
+    echo "untracked customizations: $untracked"
+    return
+  fi
+  echo "repo       $repo"
+  echo "untracked  $untracked"
+  echo "dirty      $dirty"
+  echo "ahead      $ahead  behind $behind"
+  [[ -n "$last" ]] && echo "HEAD       $last"
+}
+
+cmd_diff() {
+  local repo
+  repo="$(require_repo)"
+  local rel
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    if [[ ! -e "$HOME/$rel" ]]; then
+      echo "missing live $rel"
+      continue
+    fi
+    if cmp -s "$repo/$rel" "$HOME/$rel"; then
+      continue
+    fi
+    echo "==== $rel ===="
+    diff -u "$repo/$rel" "$HOME/$rel" || true
+  done < <(tracked_paths "$repo")
+}
+
+cmd_ignore_add() {
+  local rel="${1:-}"
+  [[ -n "$rel" ]] || die "usage: oconfig ignore add .config/hypr/monitors.lua"
+  rel="$(normalize_rel "$rel")"
+  ensure_ignore
+  if grep -Fxq "$rel" "$IGNORE_FILE"; then
+    echo "ok   already ignored $rel"
+    return
+  fi
+  echo "$rel" >> "$IGNORE_FILE"
+  echo "ignored $rel"
+}
+
+# ---- argv ----
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
+cmd="${1:-status}"
+shift || true
+
+case "$cmd" in
+  init) cmd_init "$@" ;;
+  check) cmd_check "$@" ;;
+  save) cmd_save "$@" ;;
+  adopt) cmd_adopt "$@" ;;
+  restore) cmd_restore "$@" ;;
+  status) cmd_status "$@" ;;
+  diff) cmd_diff "$@" ;;
+  ignore)
+    sub="${1:-}"; shift || true
+    [[ "$sub" == add ]] || die "usage: oconfig ignore add <path>"
+    cmd_ignore_add "$@"
+    ;;
+  *) die "unknown command: $cmd (init|check|save|adopt|restore|status|diff|ignore)" ;;
+esac

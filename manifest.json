@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.zhouzhuojie.oconfig",
+  "name": "oconfig",
+  "version": "1.0.0",
+  "author": "Rex Zhou",
+  "license": "MIT",
+  "description": "Save Omarchy customizations into a local git repo. Checks live configs against packaged defaults, ignores machine-local files, and can restore onto a new box.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "oconfig",
+    "description": "Git store for Omarchy config customizations",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
