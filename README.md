@@ -1,9 +1,11 @@
 # oconfig
 
 Save Omarchy customizations into a local git repo. Live files stay under
-`~/.config`. The store only keeps files that differ from packaged Omarchy
-defaults (plus a few extras like `.gitconfig`). Machine-local paths such as
-monitors and pointer feel are ignored.
+`~/.config`. The store only keeps files under explicit subfolders
+(`hypr`, `omarchy`, `kitty`, `alacritty`, `foot`, `ghostty`) that differ
+from packaged Omarchy defaults. Machine-local paths such as monitors and
+pointer feel are ignored. Home-root files (`.gitconfig`, `.XCompose`) are
+not part of this plugin.
 
 This is a `bar-widget` plugin: the bar pill loads a details panel. It does
 not declare a separate `panel` kind.

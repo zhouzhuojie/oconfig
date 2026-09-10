@@ -11,7 +11,6 @@ DEFAULT_IGNORE="$PLUGIN_ROOT/share/ignore.txt"
 DEFAULT_REPO="${XDG_DATA_HOME:-$HOME/.local/share}/oconfig/store"
 OMARCHY_CONFIG="${OMARCHY_PATH:-/usr/share/omarchy}/config"
 SCAN_ROOTS=(hypr omarchy kitty alacritty foot ghostty)
-EXTRA_HOME_FILES=(.XCompose .gitconfig)
 JSON=0
 
 die() { echo "oconfig: $*" >&2; exit 1; }
@@ -84,7 +83,7 @@ in_store() {
 
 tracked_paths() {
   local repo="$1"
-  git -C "$repo" ls-files -- '.config' '.gitconfig' '.XCompose'
+  git -C "$repo" ls-files -- '.config'
 }
 
 git_identity_args() {
@@ -116,10 +115,8 @@ normalize_rel() {
   printf '%s\n' "$p"
 }
 
-# Print home-relative paths of live files that differ from Omarchy defaults
-# (or are extras) and are not ignored.
+# Print .config/... paths that differ from packaged Omarchy defaults.
 scan_customizations() {
-  local repo="${1:-}"
   local root live_root f rel pkg
   ensure_ignore
   [[ -d "$OMARCHY_CONFIG" ]] || die "Omarchy config not found at $OMARCHY_CONFIG"
@@ -136,13 +133,6 @@ scan_customizations() {
       fi
       printf '%s\n' "$rel"
     done < <(find "$live_root" -xtype f -print0 2>/dev/null)
-  done
-
-  local extra
-  for extra in "${EXTRA_HOME_FILES[@]}"; do
-    ignored "$extra" && continue
-    [[ -e "$HOME/$extra" || -L "$HOME/$extra" ]] || continue
-    printf '%s\n' "$extra"
   done
 }
 
@@ -232,6 +222,7 @@ cmd_adopt() {
   local rel="${1:-}"
   [[ -n "$rel" ]] || die "usage: oconfig adopt .config/hypr/foo.lua"
   rel="$(normalize_rel "$rel")"
+  [[ "$rel" == .config/* ]] || die "only .config/ paths are stored (got $rel)"
   ignored "$rel" && die "$rel is in ignore.txt (machine-local)"
   local repo
   repo="$(require_repo)"
