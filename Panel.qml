@@ -37,6 +37,7 @@ Panel {
     root.controller.show()
     Qt.callLater(function() {
       if (root.opened) setCenterHoverRevealSuppressed(true)
+      if (keyCatcher) keyCatcher.forceActiveFocus()
     })
   }
 
@@ -195,7 +196,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(320))
+    contentWidth: panel.fittedContentWidth(Style.space(360))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
@@ -205,17 +206,18 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        if (t === "s" || t === "S") root.runCli(["save"])
-        else if (t === "p" || t === "P") root.pushStore()
-        else if (t === "u" || t === "U") root.pullStore()
-        else if (t === "g" || t === "G") root.startEditingRemote()
-        else if (t === "r" || t === "R") root.runCli(["restore"])
-        else if (t === "i" || t === "I") {
+        var k = String(t || "").toLowerCase()
+        if (k === "s") root.runCli(["save"])
+        else if (k === "p") root.pushStore()
+        else if (k === "u") root.pullStore()
+        else if (k === "g") root.startEditingRemote()
+        else if (k === "r") root.runCli(["restore"])
+        else if (k === "i") {
           var remote = setting("remote", "")
           if (remote !== "") root.runCli(["init", "--remote", remote])
           else root.runCli(["init"])
         }
-        else if (t === "c" || t === "C") root.refresh()
+        else if (k === "c") root.refresh()
       }
 
       Column {
@@ -252,21 +254,31 @@ Panel {
 
         Text {
           width: parent.width
-          visible: !root.editingRemote
-          text: (root.status.remote || setting("remote", "")) !== ""
-            ? (root.status.remote || setting("remote", ""))
-            : "No remote — press g to set a git URL"
-          color: (root.status.remote || setting("remote", "")) !== ""
-            ? Qt.darker(root.fg, 1.5) : Color.accent
+          text: "Git remote"
+          color: root.fg
+          font.family: root.fontFam
+          font.pixelSize: Style.font.body
+          font.bold: true
+        }
+
+        Text {
+          width: parent.width
+          visible: !root.editingRemote && (root.status.remote || setting("remote", "")) !== ""
+          text: root.status.remote || setting("remote", "")
+          color: Qt.darker(root.fg, 1.5)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
           wrapMode: Text.WrapAnywhere
+        }
 
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.startEditingRemote()
-          }
+        Button {
+          visible: !root.editingRemote
+          text: (root.status.remote || setting("remote", "")) !== ""
+            ? "Change git remote"
+            : "Set git remote"
+          foreground: root.fg
+          fontFamily: root.fontFam
+          onClicked: root.startEditingRemote()
         }
 
         TextField {
@@ -276,15 +288,23 @@ Panel {
           placeholderText: "git@github.com:YOU/omarchy-config.git"
           foreground: root.fg
           font.family: root.fontFam
+          onAccepted: root.commitRemote()
           Keys.onPressed: function(event) {
             if (event.key === Qt.Key_Escape) {
               root.cancelEditingRemote()
               event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              root.commitRemote()
-              event.accepted = true
             }
           }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.editingRemote
+          text: "Paste the URL, then Enter. Esc cancels."
+          color: Qt.darker(root.fg, 1.5)
+          font.family: root.fontFam
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
 
         Text {
@@ -335,8 +355,8 @@ Panel {
           text: root.editingRemote
             ? "Enter save remote   Esc cancel"
             : (root.status.initialized
-              ? "s save   p push   u pull   g remote   r restore   Esc"
-              : "i init   g remote   Esc close")
+              ? "s save   p push   u pull   r restore   Esc"
+              : "i init   Esc close")
           color: Qt.darker(root.fg, 1.5)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption

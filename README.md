@@ -17,9 +17,9 @@ That is the whole backup. `save` copies customized files into
 `~/.local/share/oconfig/store` and commits.
 
 Remote backup is optional and **not** part of init. Init only creates the
-local store. In the panel, press **`g`** to set a git URL (clipboard is
-used if it looks like `git@` / `https://`), then Enter. After that, **`p`**
-pushes and **`u`** pulls.
+local store. In the panel, click **Set git remote**, paste the URL, Enter.
+After that, **`p`** pushes and **`u`** pulls. `g` is a shortcut for the
+same button.
 
 ```sh
 …/bin/oconfig remote git@github.com:YOU/omarchy-config.git
@@ -37,7 +37,7 @@ omarchy plugin add https://github.com/zhouzhuojie/oconfig.git --enable
 ~/.config/omarchy/plugins/io.github.zhouzhuojie.oconfig/bin/oconfig restore
 ```
 
-Or in the panel: **`g`** paste the URL, **`i`** init (clones it), **`r`** restore.
+Or in the panel: **Set git remote** → **`i`** init (clones it) → **`r`** restore.
 
 `restore` copies the store onto `~/.config`. Existing files that differ are
 backed up as `*.bak.oconfig.<timestamp>` first. Monitors and pointer feel
@@ -68,8 +68,8 @@ Edit `~/.config/oconfig/ignore.txt` to keep more files local.
 
 | Key | Action |
 |---|---|
+| Click **Set git remote** | Paste a git URL, Enter to save (`g` does the same) |
 | `i` | Initialize the **local** store (clones the remote URL if you already set one) |
-| `g` | Set / edit the git remote URL (type or paste, Enter to save) |
 | `s` | Save customizations and commit |
 | `p` | Push to the git remote |
 | `u` | Pull (fast-forward) from the remote |
