@@ -16,16 +16,15 @@ omarchy plugin add https://github.com/zhouzhuojie/oconfig.git --enable
 That is the whole backup. `save` copies customized files into
 `~/.local/share/oconfig/store` and commits.
 
-Optional remote so another machine can pull the same store. Set it in the
-widget settings (Git remote URL) or:
+Remote backup is optional and **not** part of init. Init only creates the
+local store. In the panel, press **`g`** to set a git URL (clipboard is
+used if it looks like `git@` / `https://`), then Enter. After that, **`p`**
+pushes and **`u`** pulls.
 
 ```sh
 …/bin/oconfig remote git@github.com:YOU/omarchy-config.git
 …/bin/oconfig push
 ```
-
-`init --remote URL` clones that repo if the local store does not exist yet.
-The bar panel: `i` init, `s` save, `p` push, `u` pull. Escape closes.
 
 ## New machine
 
@@ -38,7 +37,7 @@ omarchy plugin add https://github.com/zhouzhuojie/oconfig.git --enable
 ~/.config/omarchy/plugins/io.github.zhouzhuojie.oconfig/bin/oconfig restore
 ```
 
-Or paste the same remote into the widget settings, press `i` then `u` then `r`.
+Or in the panel: **`g`** paste the URL, **`i`** init (clones it), **`r`** restore.
 
 `restore` copies the store onto `~/.config`. Existing files that differ are
 backed up as `*.bak.oconfig.<timestamp>` first. Monitors and pointer feel
@@ -69,12 +68,13 @@ Edit `~/.config/oconfig/ignore.txt` to keep more files local.
 
 | Key | Action |
 |---|---|
+| `i` | Initialize the **local** store (clones the remote URL if you already set one) |
+| `g` | Set / edit the git remote URL (type or paste, Enter to save) |
 | `s` | Save customizations and commit |
 | `p` | Push to the git remote |
 | `u` | Pull (fast-forward) from the remote |
 | `r` | Restore the store onto this machine |
 | `c` | Refresh status |
-| `i` | Initialize the store |
 | Esc | Close |
 | Middle click | Refresh |
 
@@ -99,8 +99,8 @@ oconfig status
 oconfig ignore add .config/hypr/foo.lua
 ```
 
-The widget **Git remote URL** setting is optional and is the same value as
-`oconfig remote`. Empty means local-only.
+The widget **Git remote URL** setting is the same value as `g` / `oconfig remote`.
+Empty means local-only.
 
 ## Tests
 

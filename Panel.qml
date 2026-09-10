@@ -22,6 +22,7 @@ Panel {
 
   property var status: Model.emptyStatus()
   property string lastAction: ""
+  property bool editingRemote: false
   readonly property string barLabel: {
     if (!status.initialized) return "󰆓"
     if (status.untracked > 0) return "󰆓 " + status.untracked
@@ -40,6 +41,7 @@ Panel {
   }
 
   function close() {
+    if (root.editingRemote) root.cancelEditingRemote()
     setCenterHoverRevealSuppressed(false)
     root.controller.hide()
   }
@@ -90,6 +92,51 @@ Panel {
     else root.runCli(["pull"])
   }
 
+  function persistRemoteSetting(url) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function")
+      return
+    var entry = { id: root.moduleName }
+    for (var key in root.settings)
+      if (key !== "id") entry[key] = root.settings[key]
+    entry.remote = url
+    root.bar.shell.updateEntryInline(root.moduleName, entry)
+    root.settings = entry
+  }
+
+  function startEditingRemote() {
+    root.editingRemote = true
+    Qt.callLater(function() {
+      if (!remoteField) return
+      var current = root.status.remote || setting("remote", "")
+      remoteField.text = current
+      if (current === "") pasteProc.running = true
+      remoteField.selectAll()
+      remoteField.forceActiveFocus()
+    })
+  }
+
+  function cancelEditingRemote() {
+    root.editingRemote = false
+    Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+  }
+
+  function commitRemote() {
+    var url = String(remoteField.text || "").trim()
+    root.editingRemote = false
+    if (url === "") {
+      root.lastAction = "remote cleared — store stays local"
+      persistRemoteSetting("")
+      Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+      return
+    }
+    persistRemoteSetting(url)
+    if (root.status.initialized)
+      root.runCli(["remote", url])
+    else
+      root.lastAction = "remote saved — press i to init (clones if the URL has history)"
+    Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+  }
+
   Process {
     id: statusProc
     command: [root.cli, "--json", "status"]
@@ -118,6 +165,22 @@ Panel {
     }
   }
 
+  Process {
+    id: pasteProc
+    command: ["wl-paste", "-n"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (!root.editingRemote || !remoteField) return
+        if (String(remoteField.text || "").trim() !== "") return
+        var clip = String(text || "").trim()
+        if (clip.indexOf("git@") === 0 || clip.indexOf("http://") === 0
+            || clip.indexOf("https://") === 0 || clip.indexOf("ssh://") === 0)
+          remoteField.text = clip
+      }
+    }
+  }
+
   Timer {
     interval: 60000
     running: true
@@ -138,12 +201,14 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.editingRemote
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "s" || t === "S") root.runCli(["save"])
         else if (t === "p" || t === "P") root.pushStore()
         else if (t === "u" || t === "U") root.pullStore()
+        else if (t === "g" || t === "G") root.startEditingRemote()
         else if (t === "r" || t === "R") root.runCli(["restore"])
         else if (t === "i" || t === "I") {
           var remote = setting("remote", "")
@@ -187,12 +252,39 @@ Panel {
 
         Text {
           width: parent.width
-          visible: (root.status.remote || setting("remote", "")) !== ""
-          text: root.status.remote || setting("remote", "")
-          color: Qt.darker(root.fg, 1.5)
+          visible: !root.editingRemote
+          text: (root.status.remote || setting("remote", "")) !== ""
+            ? (root.status.remote || setting("remote", ""))
+            : "No remote — press g to set a git URL"
+          color: (root.status.remote || setting("remote", "")) !== ""
+            ? Qt.darker(root.fg, 1.5) : Color.accent
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
           wrapMode: Text.WrapAnywhere
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.startEditingRemote()
+          }
+        }
+
+        TextField {
+          id: remoteField
+          width: parent.width
+          visible: root.editingRemote
+          placeholderText: "git@github.com:YOU/omarchy-config.git"
+          foreground: root.fg
+          font.family: root.fontFam
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Escape) {
+              root.cancelEditingRemote()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.commitRemote()
+              event.accepted = true
+            }
+          }
         }
 
         Text {
@@ -240,9 +332,11 @@ Panel {
 
         Text {
           width: parent.width
-          text: root.status.initialized
-            ? "s save   p push   u pull   r restore   c refresh   Esc close"
-            : "i init   c refresh   Esc close"
+          text: root.editingRemote
+            ? "Enter save remote   Esc cancel"
+            : (root.status.initialized
+              ? "s save   p push   u pull   g remote   r restore   Esc"
+              : "i init   g remote   Esc close")
           color: Qt.darker(root.fg, 1.5)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
