@@ -97,7 +97,7 @@ git_identity_args() {
 
 commit_if_dirty() {
   local repo="$1" msg="$2"
-  git -C "$repo" add -A -- '.config' '.gitconfig' '.XCompose' >/dev/null
+  git -C "$repo" add -A >/dev/null
   if git -C "$repo" diff --cached --quiet; then
     return 1
   fi
