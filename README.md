@@ -111,8 +111,9 @@ tests/test-oconfig.sh
 ```
 
 Dependencies already on Omarchy: `git`, `python3`, `find`, `cmp`. No extra
-packages. The plugin does not start a second shell process, does not use
-sudo, and does not overwrite configs until you run `save` or `restore`.
+packages. The plugin runs as your user, does not start a second shell
+process, and does not overwrite live configs until you run `save` or
+`restore`.
 
 ## Remove
 

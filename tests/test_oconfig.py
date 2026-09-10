@@ -272,6 +272,60 @@ console.log('ok');
         self.assertIn("ok", proc.stdout)
 
 
+class SafeWriteTests(unittest.TestCase):
+    def test_init_refuses_symlink_config_json(self) -> None:
+        with Fixture() as fx:
+            cfg_dir = fx.home / ".config" / "oconfig"
+            cfg_dir.mkdir(parents=True)
+            canary = fx.root / "outside.txt"
+            canary.write_text("precious\n")
+            (cfg_dir / "config.json").symlink_to(canary)
+            proc = fx.run("init", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("not a regular file", proc.stderr)
+            self.assertEqual(canary.read_text(), "precious\n")
+            self.assertTrue((cfg_dir / "config.json").is_symlink())
+
+    def test_remote_refuses_symlink_config_json(self) -> None:
+        with Fixture() as fx:
+            fx.run("init")
+            cfg = fx.home / ".config" / "oconfig" / "config.json"
+            canary = fx.root / "outside.txt"
+            canary.write_text("precious\n")
+            cfg.unlink()
+            cfg.symlink_to(canary)
+            proc = fx.run("remote", str(fx.root / "origin.git"), check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("not a regular file", proc.stderr)
+            self.assertEqual(canary.read_text(), "precious\n")
+
+    def test_ignore_add_refuses_symlink(self) -> None:
+        with Fixture() as fx:
+            fx.run("init")
+            ignore = fx.home / ".config" / "oconfig" / "ignore.txt"
+            canary = fx.root / "outside.txt"
+            canary.write_text("precious\n")
+            ignore.unlink()
+            ignore.symlink_to(canary)
+            proc = fx.run("ignore", "add", ".config/hypr/bindings.lua", check=False)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertEqual(canary.read_text(), "precious\n")
+
+    def test_init_writes_regular_owned_config(self) -> None:
+        with Fixture() as fx:
+            fx.run("init")
+            cfg = fx.home / ".config" / "oconfig" / "config.json"
+            self.assertTrue(cfg.is_file())
+            self.assertFalse(cfg.is_symlink())
+            self.assertEqual(cfg.stat().st_uid, os.getuid())
+            self.assertEqual(cfg.stat().st_mode & 0o777, 0o600)
+
+    def test_readme_has_no_privilege_words(self) -> None:
+        text = (ROOT / "README.md").read_text().lower()
+        for word in ("sudo", "pkexec", "doas"):
+            self.assertNotIn(word, text)
+
+
 class ManifestTests(unittest.TestCase):
     def test_manifest_has_remote_schema(self) -> None:
         data = json.loads((ROOT / "manifest.json").read_text())

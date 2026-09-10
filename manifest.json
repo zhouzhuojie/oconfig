@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.zhouzhuojie.oconfig",
   "name": "oconfig",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "Rex Zhou",
   "license": "MIT",
   "description": "Save Omarchy customizations into a local git repo. Checks live configs against packaged defaults, ignores machine-local files, and can restore onto a new box.",

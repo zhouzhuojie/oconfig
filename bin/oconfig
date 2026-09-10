@@ -42,29 +42,14 @@ dump_json() {
   python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])))' "$1"
 }
 
+SAFE_IO="$PLUGIN_ROOT/share/safe_io.py"
+
 config_get() {
-  local key="$1"
-  [[ -f "$CONFIG_FILE" ]] || return 0
-  python3 -c 'import json,os,sys
-p=json.load(open(sys.argv[1])).get(sys.argv[2],"") or ""
-print(os.path.expanduser(p) if sys.argv[2]=="repo" else p)' "$CONFIG_FILE" "$key" 2>/dev/null || true
+  python3 "$SAFE_IO" json-get "$CONFIG_FILE" "$1"
 }
 
 config_set() {
-  python3 - "$CONFIG_FILE" "$1" "$2" <<'PY'
-import json, os, sys
-path, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
-cfg = {}
-if os.path.exists(path):
-    try:
-        cfg = json.load(open(path))
-    except Exception:
-        cfg = {}
-cfg[key] = value
-os.makedirs(os.path.dirname(path), exist_ok=True)
-json.dump(cfg, open(path, "w"), indent=2)
-print("", end="")
-PY
+  python3 "$SAFE_IO" json-set "$CONFIG_FILE" "$1" "$2"
 }
 
 repo_path() { config_get repo; }
@@ -84,9 +69,7 @@ git_net() {
 
 ensure_ignore() {
   mkdir -p "$CONFIG_DIR"
-  if [[ ! -f "$IGNORE_FILE" ]]; then
-    cp "$DEFAULT_IGNORE" "$IGNORE_FILE"
-  fi
+  python3 "$SAFE_IO" copy-if-absent "$DEFAULT_IGNORE" "$IGNORE_FILE"
 }
 
 ignored() {
@@ -109,7 +92,7 @@ ignored() {
 
 require_repo() {
   local r
-  r="$(repo_path)"
+  r="$(python3 "$SAFE_IO" json-get "$CONFIG_FILE" repo)" || exit 1
   [[ -n "$r" && -d "$r/.git" ]] || die "store not initialized (run: oconfig init)"
   printf '%s\n' "$r"
 }
@@ -546,11 +529,11 @@ cmd_ignore_add() {
   [[ -n "$rel" ]] || die "usage: oconfig ignore add .config/hypr/monitors.lua"
   rel="$(normalize_rel "$rel")"
   ensure_ignore
-  if grep -Fxq "$rel" "$IGNORE_FILE"; then
+  if grep -Fxq "$rel" "$IGNORE_FILE" 2>/dev/null; then
     echo "ok   already ignored $rel"
     return
   fi
-  echo "$rel" >> "$IGNORE_FILE"
+  python3 "$SAFE_IO" append-line "$IGNORE_FILE" "$rel"
   echo "ignored $rel"
 }
 
