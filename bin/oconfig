@@ -10,7 +10,9 @@ IGNORE_FILE="$CONFIG_DIR/ignore.txt"
 DEFAULT_IGNORE="$PLUGIN_ROOT/share/ignore.txt"
 DEFAULT_REPO="${XDG_DATA_HOME:-$HOME/.local/share}/oconfig/store"
 OMARCHY_CONFIG="${OMARCHY_PATH:-/usr/share/omarchy}/config"
-SCAN_ROOTS=(hypr omarchy kitty alacritty foot ghostty)
+# Browser profiles are shipped as a tiny Preferences stub; the live tree is
+# hundreds of MB of cookies, cache, and secrets. Never walk it.
+SKIP_ROOTS=(chromium)
 JSON=0
 
 die() { echo "oconfig: $*" >&2; exit 1; }
@@ -115,24 +117,47 @@ normalize_rel() {
   printf '%s\n' "$p"
 }
 
-# Print .config/... paths that differ from packaged Omarchy defaults.
+skip_root() {
+  local name="$1" s
+  for s in "${SKIP_ROOTS[@]}"; do
+    [[ "$name" == "$s" ]] && return 0
+  done
+  return 1
+}
+
+consider() {
+  local rel="$1" live="$2" pkg="$3"
+  ignored "$rel" && return 0
+  [[ -e "$live" || -L "$live" ]] || return 0
+  if [[ -f "$pkg" ]] && cmp -s "$live" "$pkg"; then
+    return 0
+  fi
+  printf '%s\n' "$rel"
+}
+
+# Walk every path Omarchy ships under $OMARCHY_CONFIG. New Omarchy config
+# folders show up automatically; ~/.config as a whole is not scanned.
 scan_customizations() {
-  local root live_root f rel pkg
+  local entry name live_root f rel pkg
   ensure_ignore
   [[ -d "$OMARCHY_CONFIG" ]] || die "Omarchy config not found at $OMARCHY_CONFIG"
 
-  for root in "${SCAN_ROOTS[@]}"; do
-    live_root="$HOME/.config/$root"
-    [[ -d "$live_root" ]] || continue
-    while IFS= read -r -d '' f; do
-      rel=".config/${f#"$HOME/.config/"}"
-      ignored "$rel" && continue
-      pkg="$OMARCHY_CONFIG/${rel#.config/}"
-      if [[ -f "$pkg" ]] && cmp -s "$f" "$pkg"; then
-        continue
-      fi
-      printf '%s\n' "$rel"
-    done < <(find "$live_root" -xtype f -print0 2>/dev/null)
+  for entry in "$OMARCHY_CONFIG"/*; do
+    [[ -e "$entry" ]] || continue
+    name="$(basename "$entry")"
+    skip_root "$name" && continue
+
+    if [[ -d "$entry" ]]; then
+      live_root="$HOME/.config/$name"
+      [[ -d "$live_root" ]] || continue
+      while IFS= read -r -d '' f; do
+        rel=".config/${f#"$HOME/.config/"}"
+        pkg="$OMARCHY_CONFIG/${rel#.config/}"
+        consider "$rel" "$f" "$pkg"
+      done < <(find "$live_root" -xtype f -print0 2>/dev/null)
+    elif [[ -f "$entry" ]]; then
+      consider ".config/$name" "$HOME/.config/$name" "$entry"
+    fi
   done
 }
 

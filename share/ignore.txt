@@ -11,3 +11,5 @@
 .config/omarchy/themes/
 .config/omarchy/hooks/
 .config/git/config
+.config/chromium-flags.conf
+.config/chromium/
