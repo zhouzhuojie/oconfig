@@ -14,17 +14,18 @@ omarchy plugin add https://github.com/zhouzhuojie/oconfig.git --enable
 ```
 
 That is the whole backup. `save` copies customized files into
-`~/.local/share/oconfig/store` and commits. Optional: add a GitHub remote
-so the store leaves this box.
+`~/.local/share/oconfig/store` and commits.
+
+Optional remote so another machine can pull the same store. Set it in the
+widget settings (Git remote URL) or:
 
 ```sh
-cd ~/.local/share/oconfig/store
-git remote add origin git@github.com:YOU/omarchy-config.git
-git push -u origin main
+…/bin/oconfig remote git@github.com:YOU/omarchy-config.git
+…/bin/oconfig push
 ```
 
-Click the bar icon (right section) to do the same from the panel: `i` init,
-`s` save. Escape closes.
+`init --remote URL` clones that repo if the local store does not exist yet.
+The bar panel: `i` init, `s` save, `p` push, `u` pull. Escape closes.
 
 ## New machine
 
@@ -32,11 +33,12 @@ Omarchy should already be installed. Then:
 
 ```sh
 omarchy plugin add https://github.com/zhouzhuojie/oconfig.git --enable
-git clone git@github.com:YOU/omarchy-config.git ~/.local/share/oconfig/store
 ~/.config/omarchy/plugins/io.github.zhouzhuojie.oconfig/bin/oconfig init \
-  --repo ~/.local/share/oconfig/store
+  --remote git@github.com:YOU/omarchy-config.git
 ~/.config/omarchy/plugins/io.github.zhouzhuojie.oconfig/bin/oconfig restore
 ```
+
+Or paste the same remote into the widget settings, press `i` then `u` then `r`.
 
 `restore` copies the store onto `~/.config`. Existing files that differ are
 backed up as `*.bak.oconfig.<timestamp>` first. Monitors and pointer feel
@@ -68,6 +70,8 @@ Edit `~/.config/oconfig/ignore.txt` to keep more files local.
 | Key | Action |
 |---|---|
 | `s` | Save customizations and commit |
+| `p` | Push to the git remote |
+| `u` | Pull (fast-forward) from the remote |
 | `r` | Restore the store onto this machine |
 | `c` | Refresh status |
 | `i` | Initialize the store |
@@ -85,10 +89,25 @@ oconfig() {
   ~/.config/omarchy/plugins/io.github.zhouzhuojie.oconfig/bin/oconfig "$@"
 }
 
-oconfig check                 # customized files not in the store yet
-oconfig diff                  # live vs store
+oconfig check
+oconfig remote git@github.com:YOU/omarchy-config.git
+oconfig push
+oconfig pull
+oconfig save --push
+oconfig diff
 oconfig status
 oconfig ignore add .config/hypr/foo.lua
+```
+
+The widget **Git remote URL** setting is optional and is the same value as
+`oconfig remote`. Empty means local-only.
+
+## Tests
+
+```sh
+python3 -m unittest tests.test_oconfig -v
+# or
+tests/test-oconfig.sh
 ```
 
 Dependencies already on Omarchy: `git`, `python3`, `find`, `cmp`. No extra

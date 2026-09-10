@@ -14,6 +14,7 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
+  property var settings: ({})
   readonly property var barIdentity: hostWidget || root
 
   readonly property string pluginDir: Model.fileUrlToPath(Qt.resolvedUrl("."))
@@ -66,9 +67,27 @@ Panel {
     statusProc.running = true
   }
 
+  function setting(key, fallback) {
+    if (root.settings && root.settings[key] !== undefined && String(root.settings[key]) !== "")
+      return String(root.settings[key])
+    return fallback
+  }
+
   function runCli(args) {
     actionProc.command = [root.cli].concat(args)
     actionProc.running = true
+  }
+
+  function pushStore() {
+    var r = setting("remote", "")
+    if (r !== "") root.runCli(["push", "--remote", r])
+    else root.runCli(["push"])
+  }
+
+  function pullStore() {
+    var r = setting("remote", "")
+    if (r !== "") root.runCli(["pull", "--remote", r])
+    else root.runCli(["pull"])
   }
 
   Process {
@@ -84,11 +103,18 @@ Panel {
   Process {
     id: actionProc
     stdout: StdioCollector {
+      id: actionOut
       waitForEnd: true
-      onStreamFinished: {
-        root.lastAction = String(text || "").trim()
-        root.refresh()
-      }
+    }
+    stderr: StdioCollector {
+      id: actionErr
+      waitForEnd: true
+    }
+    onExited: function() {
+      var out = String(actionOut.text || "").trim()
+      var err = String(actionErr.text || "").trim()
+      root.lastAction = err !== "" ? (out !== "" ? out + "\n" + err : err) : out
+      root.refresh()
     }
   }
 
@@ -116,8 +142,14 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "s" || t === "S") root.runCli(["save"])
+        else if (t === "p" || t === "P") root.pushStore()
+        else if (t === "u" || t === "U") root.pullStore()
         else if (t === "r" || t === "R") root.runCli(["restore"])
-        else if (t === "i" || t === "I") root.runCli(["init"])
+        else if (t === "i" || t === "I") {
+          var remote = setting("remote", "")
+          if (remote !== "") root.runCli(["init", "--remote", remote])
+          else root.runCli(["init"])
+        }
         else if (t === "c" || t === "C") root.refresh()
       }
 
@@ -147,6 +179,16 @@ Panel {
           width: parent.width
           visible: root.status.repo !== ""
           text: root.status.repo
+          color: Qt.darker(root.fg, 1.5)
+          font.family: root.fontFam
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WrapAnywhere
+        }
+
+        Text {
+          width: parent.width
+          visible: (root.status.remote || setting("remote", "")) !== ""
+          text: root.status.remote || setting("remote", "")
           color: Qt.darker(root.fg, 1.5)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
@@ -199,7 +241,7 @@ Panel {
         Text {
           width: parent.width
           text: root.status.initialized
-            ? "s save   r restore   c refresh   Esc close"
+            ? "s save   p push   u pull   r restore   c refresh   Esc close"
             : "i init   c refresh   Esc close"
           color: Qt.darker(root.fg, 1.5)
           font.family: root.fontFam

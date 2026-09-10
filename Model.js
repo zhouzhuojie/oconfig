@@ -2,6 +2,7 @@ function emptyStatus() {
   return {
     initialized: false,
     repo: "",
+    remote: "",
     dirty: false,
     untracked: 0,
     untrackedPaths: [],
@@ -18,6 +19,7 @@ function parseStatus(text) {
     return {
       initialized: data.initialized === true,
       repo: String(data.repo || ""),
+      remote: String(data.remote || ""),
       dirty: data.dirty === true,
       untracked: parseInt(data.untracked, 10) || 0,
       untrackedPaths: Array.isArray(data.untrackedPaths) ? data.untrackedPaths : [],
@@ -42,6 +44,10 @@ function summaryLine(status) {
   if (!status || !status.initialized) return "Not initialized"
   if (status.untracked > 0) return status.untracked + " unsaved"
   if (status.dirty) return "Uncommitted"
+  if (status.behind > 0 && status.ahead > 0) return "Diverged from remote"
+  if (status.behind > 0) return status.behind + " behind remote"
+  if (status.ahead > 0) return status.ahead + " ahead of remote"
+  if (status.remote) return "Synced"
   return "Up to date"
 }
 

@@ -22,16 +22,19 @@ usage() {
   cat <<'EOF'
 
 Usage:
-  oconfig init [--repo PATH]   create the store (git repo) and config
-  oconfig check                customizations not yet in the store
-  oconfig save [-m MSG]        copy customizations into the store and commit
-  oconfig adopt <path>         copy one live file into the store
-  oconfig restore [--dry-run]  copy the store back onto this machine
-  oconfig status               store + drift summary
-  oconfig diff                 live vs store for tracked files
-  oconfig ignore add <path>    mark a path as machine-local
+  oconfig init [--repo PATH] [--remote URL]
+  oconfig check
+  oconfig save [-m MSG] [--push]
+  oconfig adopt <path>
+  oconfig restore [--dry-run]
+  oconfig remote [URL]         show or set the optional git remote
+  oconfig push                 push the store to origin
+  oconfig pull                 fast-forward from origin
+  oconfig status
+  oconfig diff
+  oconfig ignore add <path>
 
-  --json   machine-readable output on check/status/save/restore
+  --json   machine-readable output on check/status/save/restore/push/pull
 EOF
 }
 
@@ -39,11 +42,44 @@ dump_json() {
   python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])))' "$1"
 }
 
-repo_path() {
-  if [[ -f "$CONFIG_FILE" ]]; then
-    python3 -c 'import json,os,sys; p=json.load(open(sys.argv[1])).get("repo","")
-print(os.path.expanduser(p))' "$CONFIG_FILE" 2>/dev/null || true
-  fi
+config_get() {
+  local key="$1"
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  python3 -c 'import json,os,sys
+p=json.load(open(sys.argv[1])).get(sys.argv[2],"") or ""
+print(os.path.expanduser(p) if sys.argv[2]=="repo" else p)' "$CONFIG_FILE" "$key" 2>/dev/null || true
+}
+
+config_set() {
+  python3 - "$CONFIG_FILE" "$1" "$2" <<'PY'
+import json, os, sys
+path, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
+cfg = {}
+if os.path.exists(path):
+    try:
+        cfg = json.load(open(path))
+    except Exception:
+        cfg = {}
+cfg[key] = value
+os.makedirs(os.path.dirname(path), exist_ok=True)
+json.dump(cfg, open(path, "w"), indent=2)
+print("", end="")
+PY
+}
+
+repo_path() { config_get repo; }
+
+remote_url() { config_get remote; }
+
+validate_remote() {
+  local url="$1"
+  [[ -n "$url" ]] || die "empty remote URL"
+  [[ "$url" != -* ]] || die "remote URL must not start with -"
+  [[ "$url" != *$'\n'* ]] || die "invalid remote URL"
+}
+
+git_net() {
+  GIT_TERMINAL_PROMPT=0 git "$@"
 }
 
 ensure_ignore() {
@@ -170,36 +206,49 @@ copy_into_store() {
   cp -aL "$live" "$dest"
 }
 
+set_origin() {
+  local repo="$1" url="$2"
+  validate_remote "$url"
+  if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    git -C "$repo" remote set-url origin "$url"
+  else
+    git -C "$repo" remote add origin "$url"
+  fi
+  config_set remote "$url"
+}
+
 cmd_init() {
-  local repo="$DEFAULT_REPO"
+  local repo="$DEFAULT_REPO" remote=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) repo="${2:-}"; shift 2 ;;
+      --remote) remote="${2:-}"; shift 2 ;;
       *) die "unknown init option: $1" ;;
     esac
   done
   repo="${repo/#\~/$HOME}"
-  mkdir -p "$repo" "$CONFIG_DIR" "$STATE_DIR"
-  if [[ ! -d "$repo/.git" ]]; then
+  mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+  if [[ -n "$remote" && ! -d "$repo/.git" ]]; then
+    validate_remote "$remote"
+    mkdir -p "$(dirname "$repo")"
+    git_net clone -- "$remote" "$repo" || die "failed to clone $remote"
+  elif [[ ! -d "$repo/.git" ]]; then
+    mkdir -p "$repo"
     git init -q -b main "$repo"
     git -C "$repo" config user.name "$(git config --global user.name 2>/dev/null || echo oconfig)"
     git -C "$repo" config user.email "$(git config --global user.email 2>/dev/null || echo oconfig@localhost)"
   fi
-  python3 - "$CONFIG_FILE" "$repo" <<'PY'
-import json, os, sys
-path, repo = sys.argv[1], sys.argv[2]
-cfg = {}
-if os.path.exists(path):
-    try:
-        cfg = json.load(open(path))
-    except Exception:
-        cfg = {}
-cfg["repo"] = repo
-os.makedirs(os.path.dirname(path), exist_ok=True)
-json.dump(cfg, open(path, "w"), indent=2)
-print("", end="")
-PY
+  config_set repo "$repo"
   ensure_ignore
+  if ! git -C "$repo" config user.name >/dev/null; then
+    git -C "$repo" config user.name "$(git config --global user.name 2>/dev/null || echo oconfig)"
+  fi
+  if ! git -C "$repo" config user.email >/dev/null; then
+    git -C "$repo" config user.email "$(git config --global user.email 2>/dev/null || echo oconfig@localhost)"
+  fi
+  if [[ -n "$remote" ]]; then
+    set_origin "$repo" "$remote"
+  fi
   if [[ ! -f "$repo/README.md" ]]; then
     cat > "$repo/README.md" <<EOF
 # oconfig store
@@ -256,10 +305,11 @@ cmd_adopt() {
 }
 
 cmd_save() {
-  local msg="oconfig: save customizations"
+  local msg="oconfig: save customizations" do_push=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -m|--message) msg="${2:-}"; shift 2 ;;
+      --push) do_push=1; shift ;;
       *) die "unknown save option: $1" ;;
     esac
   done
@@ -283,6 +333,9 @@ cmd_save() {
   local committed=0
   if commit_if_dirty "$repo" "$msg"; then
     committed=1
+  fi
+  if (( do_push )); then
+    cmd_push
   fi
 
   if (( JSON )); then
@@ -354,13 +407,17 @@ cmd_restore() {
 }
 
 cmd_status() {
-  local initialized=0 repo="" dirty=0 untracked=0 ahead=0 behind=0 last=""
+  local initialized=0 repo="" dirty=0 untracked=0 ahead=0 behind=0 last="" remote=""
   local untracked_paths=()
   if [[ -f "$CONFIG_FILE" ]]; then
     repo="$(repo_path || true)"
+    remote="$(remote_url || true)"
   fi
   if [[ -n "$repo" && -d "$repo/.git" ]]; then
     initialized=1
+    if [[ -z "$remote" ]]; then
+      remote="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+    fi
     if ! git -C "$repo" diff --quiet || ! git -C "$repo" diff --cached --quiet; then
       dirty=1
     fi
@@ -382,10 +439,11 @@ cmd_status() {
   if (( JSON )); then
     OCONFIG_INITIALIZED="$initialized" OCONFIG_REPO="$repo" OCONFIG_DIRTY="$dirty" \
     OCONFIG_UNTRACKED="$untracked" OCONFIG_AHEAD="${ahead:-0}" OCONFIG_BEHIND="${behind:-0}" \
-    OCONFIG_LAST="$last" python3 -c 'import json,os,sys
+    OCONFIG_LAST="$last" OCONFIG_REMOTE="$remote" python3 -c 'import json,os,sys
 print(json.dumps({
   "initialized": os.environ.get("OCONFIG_INITIALIZED")=="1",
   "repo": os.environ.get("OCONFIG_REPO",""),
+  "remote": os.environ.get("OCONFIG_REMOTE",""),
   "dirty": os.environ.get("OCONFIG_DIRTY")=="1",
   "untracked": int(os.environ.get("OCONFIG_UNTRACKED") or 0),
   "ahead": int(os.environ.get("OCONFIG_AHEAD") or 0),
@@ -402,10 +460,67 @@ print(json.dumps({
     return
   fi
   echo "repo       $repo"
+  echo "remote     ${remote:-"(none)"}"
   echo "untracked  $untracked"
   echo "dirty      $dirty"
   echo "ahead      $ahead  behind $behind"
   [[ -n "$last" ]] && echo "HEAD       $last"
+}
+
+cmd_remote() {
+  local url="${1:-}" repo
+  repo="$(require_repo)"
+  if [[ -z "$url" ]]; then
+    local current
+    current="$(git -C "$repo" remote get-url origin 2>/dev/null || remote_url || true)"
+    if [[ -z "$current" ]]; then
+      echo "no remote configured"
+      return
+    fi
+    echo "$current"
+    return
+  fi
+  set_origin "$repo" "$url"
+  echo "remote origin -> $url"
+}
+
+cmd_push() {
+  local repo url
+  repo="$(require_repo)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --remote) set_origin "$repo" "${2:-}"; shift 2 ;;
+      *) die "unknown push option: $1" ;;
+    esac
+  done
+  url="$(git -C "$repo" remote get-url origin 2>/dev/null || remote_url || true)"
+  [[ -n "$url" ]] || die "no remote configured (oconfig remote <url>, or set it in the widget)"
+  set_origin "$repo" "$url"
+  git_net -C "$repo" push -u origin HEAD
+  echo "pushed to $url"
+}
+
+cmd_pull() {
+  local repo url
+  repo="$(require_repo)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --remote) set_origin "$repo" "${2:-}"; shift 2 ;;
+      *) die "unknown pull option: $1" ;;
+    esac
+  done
+  url="$(git -C "$repo" remote get-url origin 2>/dev/null || remote_url || true)"
+  [[ -n "$url" ]] || die "no remote configured (oconfig remote <url>, or set it in the widget)"
+  set_origin "$repo" "$url"
+  git_net -C "$repo" fetch origin
+  if git -C "$repo" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    git_net -C "$repo" pull --ff-only
+  else
+    local branch
+    branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD)"
+    git_net -C "$repo" pull --ff-only origin "$branch" || git_net -C "$repo" pull --ff-only origin main
+  fi
+  echo "pulled from $url"
 }
 
 cmd_diff() {
@@ -459,6 +574,9 @@ case "$cmd" in
   save) cmd_save "$@" ;;
   adopt) cmd_adopt "$@" ;;
   restore) cmd_restore "$@" ;;
+  remote) cmd_remote "$@" ;;
+  push) cmd_push "$@" ;;
+  pull) cmd_pull "$@" ;;
   status) cmd_status "$@" ;;
   diff) cmd_diff "$@" ;;
   ignore)
@@ -466,5 +584,5 @@ case "$cmd" in
     [[ "$sub" == add ]] || die "usage: oconfig ignore add <path>"
     cmd_ignore_add "$@"
     ;;
-  *) die "unknown command: $cmd (init|check|save|adopt|restore|status|diff|ignore)" ;;
+  *) die "unknown command: $cmd (init|check|save|adopt|restore|remote|push|pull|status|diff|ignore)" ;;
 esac
