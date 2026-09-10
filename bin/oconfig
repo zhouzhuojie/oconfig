@@ -55,7 +55,7 @@ ensure_ignore() {
 
 ignored() {
   local rel="$1"
-  [[ "$rel" == *.sample || "$rel" == *.bak || "$rel" == *.bak.* ]] && return 0
+  [[ "$rel" == *.sample || "$rel" == *.bak || "$rel" == *.bak.* || "$rel" == *.log || "$rel" == *.lock ]] && return 0
   [[ -f "$IGNORE_FILE" ]] || return 1
   local pat
   while IFS= read -r pat; do

@@ -13,3 +13,8 @@
 .config/git/config
 .config/chromium-flags.conf
 .config/chromium/
+.config/btop/themes/
+.config/herdr/session.json
+.config/herdr/release-notes.json
+.config/herdr/.plugins.lock
+.config/opencode/plugins/
